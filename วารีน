@@ -1,0 +1,453 @@
+const DEFAULT_PRODUCTS = [
+    { id: 1, name: 'ขวาน', category: 'เครื่องมือ', price: 5, stock: 500, image: 'https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=900&q=80' },
+    { id: 2, name: 'เลื่อย', category: 'เครื่องมือ', price: 5, stock: 500, image: 'https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=900&q=80' },
+    { id: 3, name: 'ขนมคละ', category: 'ขนม', price: 5.5, stock: 300, image: 'https://images.unsplash.com/photo-1553163147-9f0b2d9d4e4d?auto=format&fit=crop&w=900&q=80' },
+    { id: 4, name: 'พืชไร่คละ', category: 'พืชผล', price: 3, stock: 1000, image: 'https://images.unsplash.com/photo-1464226184884-fa52ac9fc5a0?auto=format&fit=crop&w=900&q=80' },
+    { id: 5, name: 'วัสดุขยายพื้นที่', category: 'วัสดุ', price: 10, stock: 100, image: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=900&q=80' },
+    { id: 6, name: 'น้ำผึ้ง', category: 'ของแปรรูป', price: 3, stock: 100, image: 'https://images.unsplash.com/photo-1558642452-9d2a7deb7f62?auto=format&fit=crop&w=900&q=80' }
+];
+
+function loadFromStorage(key, fallback) {
+    try {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : fallback;
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function saveToStorage(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+}
+
+let products = loadFromStorage('variana_products', DEFAULT_PRODUCTS);
+let orders = loadFromStorage('variana_orders', []);
+let cart = {};
+let pin = localStorage.getItem('variana_pin') || '2917';
+let isAdmin = false;
+
+function formatMoney(amount) {
+    return '฿' + Number(amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>\"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    }[char]));
+}
+
+function saveAll() {
+    saveToStorage('variana_products', products);
+    saveToStorage('variana_orders', orders);
+}
+
+function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function filterProducts() {
+    const keyword = document.getElementById('search').value.toLowerCase();
+    const categorySelect = document.getElementById('category');
+    const categories = ['ทั้งหมด', ...new Set(products.map(p => p.category))];
+    const previousCategory = categorySelect.value;
+
+    categorySelect.innerHTML = categories.map(cat => `<option>${escapeHtml(cat)}</option>`).join('');
+    if (categories.includes(previousCategory)) categorySelect.value = previousCategory;
+
+    const selectedCategory = categorySelect.value;
+    const filtered = products.filter(product => {
+        const matchText = (product.name + ' ' + product.category).toLowerCase().includes(keyword);
+        const matchCategory = selectedCategory === 'ทั้งหมด' || product.category === selectedCategory;
+        return matchText && matchCategory;
+    });
+
+    const container = document.getElementById('products-container');
+    if (filtered.length === 0) {
+        container.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; color: #7a6687;">ไม่พบสินค้า</p>';
+        return;
+    }
+
+    container.innerHTML = filtered.map(product => `
+        <article class="product-card">
+            <div class="product-image-box">
+                <img class="product-image" src="${product.image || 'https://via.placeholder.com/300x220?text=Variana'}" alt="${escapeHtml(product.name)}">
+            </div>
+            <div class="product-info">
+                <h3 class="product-name">${escapeHtml(product.name)}</h3>
+                <div class="product-meta">${escapeHtml(product.category)}</div>
+                <div class="product-price">${formatMoney(product.price)}</div>
+                <div class="product-stock">เหลือ ${product.stock}</div>
+                <button class="btn btn-primary" ${product.stock <= 0 ? 'disabled' : ''} onclick="addToCart(${product.id})">ใส่ตะกร้า +</button>
+            </div>
+        </article>
+    `).join('');
+
+    renderCart();
+}
+
+function addToCart(productId) {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    const quantity = cart[productId] || 0;
+    if (quantity < product.stock) {
+        cart[productId] = quantity + 1;
+        renderCart();
+    } else {
+        alert('จำนวนเกินสต็อกแล้วค่ะ');
+    }
+}
+
+function changeQty(productId, change) {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    const nextQty = (cart[productId] || 0) + change;
+    if (nextQty <= 0) {
+        delete cart[productId];
+    } else if (nextQty <= product.stock) {
+        cart[productId] = nextQty;
+    } else {
+        alert('จำนวนเกินสต็อกแล้วค่ะ');
+        return;
+    }
+
+    renderCart();
+}
+
+function renderCart() {
+    const entries = Object.entries(cart).filter(([id, qty]) => qty > 0 && products.some(p => p.id === Number(id)));
+    const cartContainer = document.getElementById('cart-items');
+
+    if (entries.length === 0) {
+        cartContainer.innerHTML = '<p style="color:#7a6687; margin:0;">ยังไม่มีสินค้าในตะกร้า</p>';
+        document.getElementById('cart-total').textContent = 'รวม ฿0.00';
+        return;
+    }
+
+    cartContainer.innerHTML = entries.map(([id, qty]) => {
+        const product = products.find(p => p.id === Number(id));
+        return `
+            <div class="cart-item">
+                <div class="cart-item-info">
+                    <div class="cart-item-name">${escapeHtml(product.name)}</div>
+                    <div class="cart-price">${formatMoney(product.price)} × ${qty}</div>
+                </div>
+                <div class="qty-box">
+                    <button class="qty-button" onclick="changeQty(${product.id}, -1)">−</button>
+                    <span>${qty}</span>
+                    <button class="qty-button" onclick="changeQty(${product.id}, 1)">+</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    const total = entries.reduce((sum, [id, qty]) => {
+        const product = products.find(p => p.id === Number(id));
+        return sum + product.price * qty;
+    }, 0);
+
+    document.getElementById('cart-total').textContent = 'รวม ' + formatMoney(total);
+}
+
+function placeOrder() {
+    const buyerName = document.getElementById('buyerName').value.trim();
+    const buyerContact = document.getElementById('buyerContact').value.trim();
+    const buyerNote = document.getElementById('buyerNote').value.trim();
+    const entries = Object.entries(cart).filter(([id, qty]) => qty > 0 && products.some(p => p.id === Number(id)));
+
+    if (!buyerName || !buyerContact || entries.length === 0) {
+        alert('กรุณากรอกชื่อ ช่องทางติดต่อ และเลือกสินค้า');
+        return;
+    }
+
+    if (entries.some(([id, qty]) => {
+        const product = products.find(p => p.id === Number(id));
+        return qty > product.stock;
+    })) {
+        alert('สต็อกไม่พอ กรุณาตรวจตะกร้า');
+        return;
+    }
+
+    const items = entries.map(([id, qty]) => {
+        const product = products.find(p => p.id === Number(id));
+        return {
+            id: product.id,
+            name: product.name,
+            price: product.price,
+            qty
+        };
+    });
+
+    const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+
+    orders.unshift({
+        id: 'OS' + Date.now().toString().slice(-8),
+        name: buyerName,
+        contact: buyerContact,
+        note: buyerNote,
+        items,
+        total,
+        status: 'รอแม่ค้ายืนยัน',
+        created: new Date().toLocaleString('th-TH')
+    });
+
+    saveAll();
+    cart = {};
+    renderCart();
+    document.getElementById('buyerName').value = '';
+    document.getElementById('buyerContact').value = '';
+    document.getElementById('buyerNote').value = '';
+    document.getElementById('lookup-name').value = buyerName;
+    searchOrders();
+    renderAdmin();
+    alert('ส่งคำสั่งซื้อแล้วค่ะ รอแม่ค้ายืนยันนะคะ');
+}
+
+function searchOrders() {
+    const query = document.getElementById('lookup-name').value.trim().toLowerCase();
+    const container = document.getElementById('orders-container');
+
+    if (!query) {
+        container.innerHTML = '<p style="color:#7a6687; margin: 12px 0 0;">กรอกชื่อผู้สั่งซื้อเพื่อค้นหา</p>';
+        return;
+    }
+
+    const filtered = orders.filter(order => order.name.toLowerCase() === query);
+    if (filtered.length === 0) {
+        container.innerHTML = '<p style="color:#7a6687; margin: 12px 0 0;">ไม่พบออเดอร์</p>';
+        return;
+    }
+
+    container.innerHTML = filtered.map(order => `
+        <div class="order-item">
+            <div class="order-info">
+                <div class="order-id">${escapeHtml(order.id)}</div>
+                <div class="order-meta">${escapeHtml(order.created)} • ${escapeHtml(order.status)}</div>
+            </div>
+            <div class="order-amount" style="font-weight: 900; color: #8c67eb;">${formatMoney(order.total)}</div>
+        </div>
+    `).join('');
+}
+
+function adminLogin() {
+    if (isAdmin) {
+        document.getElementById('admin-panel').classList.toggle('hidden');
+        return;
+    }
+
+    const input = prompt('รหัสแผงจัดการ (เริ่มต้น 2917)');
+    if (input === pin) {
+        isAdmin = true;
+        document.getElementById('admin-panel').classList.remove('hidden');
+        renderAdmin();
+        document.getElementById('admin-panel').scrollIntoView({ behavior: 'smooth' });
+    } else if (input !== null) {
+        alert('รหัสไม่ถูกต้อง');
+    }
+}
+
+function adminLogout() {
+    isAdmin = false;
+    document.getElementById('admin-panel').classList.add('hidden');
+}
+
+function clearForm() {
+    ['editId', 'pName', 'pCat', 'pPrice', 'pStock', 'pImage'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+}
+
+function saveProduct() {
+    const editId = Number(document.getElementById('editId').value || 0);
+    const name = document.getElementById('pName').value.trim();
+    const category = document.getElementById('pCat').value.trim() || 'อื่น ๆ';
+    const price = Number(document.getElementById('pPrice').value);
+    const stock = Number(document.getElementById('pStock').value);
+    const image = document.getElementById('pImage').value.trim();
+
+    if (!name || Number.isNaN(price) || price < 0 || Number.isNaN(stock) || stock < 0 || !Number.isInteger(stock)) {
+        alert('กรุณากรอกข้อมูลให้ถูกต้อง');
+        return;
+    }
+
+    if (editId) {
+        const product = products.find(p => p.id === editId);
+        if (product) {
+            product.name = name;
+            product.category = category;
+            product.price = price;
+            product.stock = stock;
+            product.image = image || product.image;
+        }
+    } else {
+        products.push({
+            id: Date.now(),
+            name,
+            category,
+            price,
+            stock,
+            image: image || 'https://via.placeholder.com/300x220?text=Variana'
+        });
+    }
+
+    saveAll();
+    clearForm();
+    renderAll();
+}
+
+function editProduct(productId) {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    document.getElementById('editId').value = product.id;
+    document.getElementById('pName').value = product.name;
+    document.getElementById('pCat').value = product.category;
+    document.getElementById('pPrice').value = product.price;
+    document.getElementById('pStock').value = product.stock;
+    document.getElementById('pImage').value = product.image || '';
+    document.getElementById('pName').focus();
+}
+
+function deleteProduct(productId) {
+    if (!confirm('ลบสินค้านี้?')) return;
+
+    products = products.filter(p => p.id !== productId);
+    delete cart[productId];
+    saveAll();
+    renderAll();
+}
+
+function confirmOrder(orderId) {
+    const order = orders.find(o => o.id === orderId);
+    if (!order || order.status !== 'รอแม่ค้ายืนยัน') return;
+
+    const ok = order.items.every(item => {
+        const product = products.find(p => p.id === item.id);
+        return product && product.stock >= item.qty;
+    });
+
+    if (!ok) {
+        alert('สต็อกไม่พอ');
+        return;
+    }
+
+    order.items.forEach(item => {
+        const product = products.find(p => p.id === item.id);
+        if (product) product.stock -= item.qty;
+    });
+
+    order.status = 'ยืนยันแล้ว';
+    saveAll();
+    renderAll();
+}
+
+function cancelOrder(orderId) {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    order.status = 'ยกเลิก';
+    saveAll();
+    renderAll();
+}
+
+function changePin() {
+    const nextPin = document.getElementById('newPin').value;
+    if (!nextPin || nextPin.length < 4) {
+        alert('รหัสผ่านอย่างน้อย 4 ตัว');
+        return;
+    }
+    pin = nextPin;
+    localStorage.setItem('variana_pin', pin);
+    document.getElementById('newPin').value = '';
+    alert('เปลี่ยนรหัสผ่านแล้ว');
+}
+
+function exportOrders() {
+    const rows = [
+        ['เลขออเดอร์', 'วันที่', 'ชื่อลูกค้า', 'ติดต่อ', 'สินค้า', 'ยอดรวม', 'สถานะ', 'หมายเหตุ'],
+        ...orders.map(o => [o.id, o.created, o.name, o.contact, o.items.map(i => i.name + ' x' + i.qty).join('; '), o.total, o.status, o.note || ''])
+    ];
+
+    const csv = '\uFEFF' + rows.map(row => row.map(value => '"' + String(value ?? '').replace(/"/g, '""') + '"').join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'variana-orders.csv';
+    link.click();
+}
+
+function resetDemo() {
+    if (!confirm('รีเซ็ตสินค้าและออเดอร์กลับค่าเริ่มต้น?')) return;
+
+    products = DEFAULT_PRODUCTS.map(p => ({ ...p }));
+    orders = [];
+    cart = {};
+    pin = '2917';
+    localStorage.removeItem('variana_pin');
+    saveAll();
+    renderAll();
+    alert('รีเซ็ตข้อมูลเรียบร้อยแล้ว');
+}
+
+function renderAdmin() {
+    const adminProducts = document.getElementById('admin-products');
+    adminProducts.innerHTML = products.length === 0 ? '<p style="color:#7a6687; margin:0;">ยังไม่มีสินค้า</p>' : products.map(product => `
+        <div class="admin-row">
+            <div class="admin-info">
+                <div class="admin-title">${escapeHtml(product.name)}</div>
+                <div class="admin-meta">${formatMoney(product.price)} • คงเหลือ ${product.stock}</div>
+            </div>
+            <div class="form-buttons">
+                <button class="btn btn-primary" onclick="editProduct(${product.id})">แก้ไข</button>
+                <button class="btn btn-danger" onclick="deleteProduct(${product.id})">ลบ</button>
+            </div>
+        </div>
+    `).join('');
+
+    const adminOrders = document.getElementById('admin-orders');
+    adminOrders.innerHTML = orders.length === 0 ? '<p style="color:#7a6687; margin:0;">ยังไม่มีออเดอร์</p>' : orders.map(order => `
+        <div class="admin-row" style="align-items:flex-start; flex-direction:column;">
+            <div class="admin-info">
+                <div class="admin-title">${escapeHtml(order.id)} • ${escapeHtml(order.name)}</div>
+                <div class="admin-meta">${escapeHtml(order.contact)} • ${escapeHtml(order.created)}</div>
+                <div class="admin-meta">${order.items.map(i => `${escapeHtml(i.name)} × ${i.qty}`).join(', ')}</div>
+                <div class="admin-meta"><strong>${formatMoney(order.total)} • ${escapeHtml(order.status)}</strong></div>
+                ${order.note ? `<div class="admin-meta">หมายเหตุ: ${escapeHtml(order.note)}</div>` : ''}
+            </div>
+            <div class="form-buttons">
+                ${order.status === 'รอแม่ค้ายืนยัน' ? `
+                    <button class="btn btn-primary" onclick="confirmOrder('${order.id}')">ยืนยัน</button>
+                    <button class="btn btn-danger" onclick="cancelOrder('${order.id}')">ยกเลิก</button>
+                ` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderAll() {
+    filterProducts();
+    renderCart();
+    searchOrders();
+    renderAdmin();
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    const popup = document.getElementById('welcome-popup');
+    const enterButton = document.getElementById('enter-shop');
+
+    setTimeout(() => {
+        popup.classList.add('show');
+    }, 3400);
+
+    enterButton.addEventListener('click', () => {
+        popup.classList.add('closing');
+        setTimeout(() => popup.style.display = 'none', 450);
+    });
+
+    renderAll();
+});
